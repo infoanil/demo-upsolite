@@ -1,0 +1,132 @@
+<sub-plan-quick-checkout product-id="{{ product.id }}" quantity="1"></sub-plan-quick-checkout>
+
+<style>
+    .spqc { display: grid; gap: .5rem; margin-top: 1rem; }
+    .spqc__btn {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: .75rem 1rem; border: 1px solid #ddd; border-radius: 8px;
+        cursor: pointer; background: #fff; position: relative;
+    }
+    .spqc__name { font-weight: 600; }
+    .spqc__price { opacity: .8; }
+    .spqc__copied {
+        position: absolute; right: 10px; bottom: -22px;
+        font-size: 12px; color: #2e7d32; opacity: 0; transition: opacity .2s ease;
+    }
+    .spqc__btn.copied .spqc__copied { opacity: 1; }
+</style>
+
+<script>
+    class SubPlanQuickCheckout extends HTMLElement {
+        connectedCallback() {
+            this.productId = this.getAttribute('product-id');
+            this.qty = String(this.getAttribute('quantity') || '1');
+            this.container = document.createElement('div');
+            this.container.className = 'spqc';
+            this.appendChild(this.container);
+
+            const dataEl = document.getElementById(`sp-data-${this.productId}`);
+            if (!dataEl) return this._error('Missing plan JSON');
+
+            let data;
+            try { data = JSON.parse(dataEl.textContent || '{}'); }
+            catch (e) { return this._error('Invalid plan JSON'); }
+
+            this.groups = data.groups || [];
+            this.byVariant = data.byVariant || {};
+            this.variantMeta = data.variantMeta || {};
+            this.currentVid = String(data.initialVariantId || '');
+
+            this.renderForVariant(this.currentVid);
+
+            document.addEventListener('change', (e) => {
+                const el = e.target?.closest('[data-variant-id]');
+                if (!el) return;
+                const vid = String(el.getAttribute('data-variant-id') || '');
+                if (vid) this.renderForVariant(vid);
+            });
+        }
+
+        _error(msg){ this.innerHTML = `<div style="color:#b00">${msg}</div>`; }
+
+        _formatMoney(cents, currency = window.Shopify?.currency?.active || 'USD', locale = (navigator.language || 'en')) {
+            const val = Number(cents||0)/100;
+            try { return new Intl.NumberFormat(locale, {style:'currency', currency}).format(val); }
+            catch (_) { return val.toFixed(2); }
+        }
+
+        renderForVariant(variantId){
+            this.currentVid = String(variantId);
+            this.container.innerHTML = '';
+
+            const allocs = this.byVariant[this.currentVid] || [];
+            if (!allocs.length) {
+                this.container.innerHTML = `<div class="spqc__empty">No subscription plans for this variant.</div>`;
+                return;
+            }
+
+            const byGroup = {};
+            allocs.forEach(a => (byGroup[a.selling_plan_group_id] ||= []).push(a));
+
+            this.groups.forEach(group => {
+                (byGroup[group.id] || []).forEach(a => {
+                    const plan = a.selling_plan || {};
+                    const price = typeof plan.price === 'number' ? plan.price : null;
+
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'spqc__btn';
+                    btn.setAttribute('data-plan-id', String(plan.id || ''));
+                    btn.setAttribute('data-variant-id', this.currentVid);
+
+                    const name = document.createElement('span');
+                    name.className = 'spqc__name';
+                    name.textContent = plan.name || `Plan ${plan.id}`;
+
+                    const priceEl = document.createElement('span');
+                    priceEl.className = 'spqc__price';
+                    priceEl.textContent = price != null ? this._formatMoney(price) : '';
+
+                    const copied = document.createElement('span');
+                    copied.className = 'spqc__copied';
+                    copied.textContent = 'Copied!';
+
+                    btn.appendChild(name);
+                    btn.appendChild(priceEl);
+                    btn.appendChild(copied);
+
+                    btn.addEventListener('click', async () => {
+                        const link = this.buildCheckoutLink({
+                            variantId: this.currentVid,
+                            planId: String(plan.id || ''),
+                            quantity: this.qty
+                        });
+                        try {
+                            await navigator.clipboard.writeText(link);
+                            btn.classList.add('copied');
+                            alert('link copied=><br>'+link)
+                            setTimeout(() => btn.classList.remove('copied'), 1500);
+                        } catch (err) {
+                            alert('Copy failed. Here’s your link:\n' + link);
+                        }
+                    });
+
+                    this.container.appendChild(btn);
+                });
+            });
+        }
+
+        buildCheckoutLink({ variantId, planId, quantity }) {
+            const root = (window.Shopify && Shopify.shop) ? Shopify.shop : '/';
+            const addParams = new URLSearchParams();
+            addParams.append('items[][id]', variantId);
+            addParams.append('items[][quantity]', quantity);
+            addParams.append('items[][selling_plan]', planId);
+            addParams.append('return_to', '/checkout');
+            const clearParams = new URLSearchParams();
+            clearParams.append('return_to', `/cart/add?${addParams.toString()}`);
+            return `https://${root}/cart/clear?${clearParams.toString()}`;
+        }
+    }
+    customElements.define('sub-plan-quick-checkout', SubPlanQuickCheckout);
+</script>

@@ -40,7 +40,7 @@
     {%- for alloc in vv.selling_plan_allocations -%}
     {%- assign sp_name = alloc.selling_plan.name | to_s -%}
     {%- assign sp_price = alloc.price | default: 0 -%}
-    {%- if sp_name != '6 month subscription' or sp_price != 0 -%}
+   
         {%- assign cmp = alloc.compare_at_price | default: 0 -%}
         {%- assign prc = sp_price -%}
 
@@ -63,7 +63,7 @@
             }
           }
           {%- assign wrote_one = true -%}
-        {%- endif -%}
+  
     {%- endfor -%}
     ]
   {%- endcapture -%}
@@ -219,7 +219,10 @@
         }
 
         _updatePricing(selectedPlanId = ''){
-            const allocs = this.byVariant[this.currentVid] || [];
+            const baseAllocs = this.byVariant[this.currentVid] || [];
+            const allocs = (Array.isArray(this.visibleAllocations) && this.visibleAllocations.length)
+                ? this.visibleAllocations
+                : baseAllocs.filter(a => !this._planHidden(a?.selling_plan?.name || ''));
             const planId = selectedPlanId ? String(selectedPlanId) : '';
             let subPrice = null;
             let cmpPrice = null;
@@ -310,7 +313,10 @@
         }
 
         _extractFrequencyFromGroup(selectedPlanId = ''){
-            const allocs = this.byVariant[this.currentVid] || [];
+            const allocsRaw = this.byVariant[this.currentVid] || [];
+            const allocs = (Array.isArray(this.visibleAllocations) && this.visibleAllocations.length)
+                ? this.visibleAllocations
+                : allocsRaw;
             const planId = selectedPlanId ? String(selectedPlanId) : '';
             let groupId = '';
 
@@ -332,18 +338,38 @@
             return this._normalizeFrequency(raw);
         }
 
+        _planHidden(planName = ''){
+            const key = (planName || '').trim();
+            if (!key) return false;
+            const meta = this.planMeta?.[key];
+            const hideVal = meta?.hide;
+            if (typeof hideVal === 'string') {
+                return hideVal.toLowerCase() === 'true';
+            }
+            return Boolean(hideVal);
+        }
+
         _resolveFeatureMessage(selectedPlanId = ''){
             if (!this.planMeta) return '';
             const planId = selectedPlanId ? String(selectedPlanId) : '';
 
             let planName = '';
             if (planId && this.allocsByPlan && this.allocsByPlan[planId]) {
-                planName = this.allocsByPlan[planId]?.selling_plan?.name || '';
+                const candidate = this.allocsByPlan[planId]?.selling_plan?.name || '';
+                if (candidate && !this._planHidden(candidate)) {
+                    planName = candidate;
+                }
             }
 
             if (!planName) {
-                const allocs = this.byVariant[this.currentVid] || [];
-                planName = allocs[0]?.selling_plan?.name || '';
+                const allocs = (Array.isArray(this.visibleAllocations) && this.visibleAllocations.length)
+                    ? this.visibleAllocations
+                    : (this.byVariant[this.currentVid] || []);
+                const visible = allocs.find(a => {
+                    const name = a?.selling_plan?.name || '';
+                    return name && !this._planHidden(name);
+                });
+                planName = visible?.selling_plan?.name || '';
             }
 
             planName = (planName || '').trim();
@@ -401,15 +427,25 @@
 
         refreshForVariant(variantId){
             this.currentVid = String(variantId || '');
-            const allocs = this.byVariant[this.currentVid] || [];
+            const rawAllocs = this.byVariant[this.currentVid] || [];
             this.allocsByPlan = {};
+            this.visibleAllocations = [];
 
             // reset
             this.freq.innerHTML = '';
+
+            const visibleAllocs = [];
+            rawAllocs.forEach(a => {
+                const planName = a?.selling_plan?.name || '';
+                if (this._planHidden(planName)) return;
+                visibleAllocs.push(a);
+            });
+            this.visibleAllocations = visibleAllocs;
+
             this._setSellingPlan('');
 
             // if no subs for this variant → force one-time
-            if (!allocs.length){
+            if (!visibleAllocs.length){
                 this.subRadio.checked = false;
                 this.subRadio.disabled = true;
                 if (this.showOneTime && this.otRadio){
@@ -421,7 +457,7 @@
             } else {
                 // populate frequency options (ordered by group)
                 const byGroup = {};
-                allocs.forEach(a => {
+                visibleAllocs.forEach(a => {
                     (byGroup[a.selling_plan_group_id] ||= []).push(a);
                     const planId = String(a?.selling_plan?.id || '');
                     if (planId) this.allocsByPlan[planId] = a;
