@@ -468,9 +468,9 @@
                         const opt = document.createElement('option');
                         opt.value = String(a.selling_plan.id);
                         const label = (Array.isArray(a.selling_plan.options) && a.selling_plan.options[0]?.value)
-                            ? `${a.selling_plan.name} - ${a.selling_plan.id}`
+                            ? `${a.selling_plan.name}`
                             : (a.selling_plan.name || 'Plan');
-                        opt.textContent = `${label} – ${this._formatMoney(a.selling_plan.price)}`;
+                        opt.textContent = `${label}`;
                         this.freq.appendChild(opt);
                     });
                 });
