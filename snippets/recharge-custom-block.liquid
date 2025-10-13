@@ -1,0 +1,331 @@
+{%- assign initial_v = product.selected_or_first_available_variant -%}
+<script type="application/json" id="sp-data-{{ product.id }}">
+{%- capture by_variant_json -%}{%- endcapture -%}
+{%- capture variant_meta_json -%}{%- endcapture -%}
+
+{%- for vv in product.variants -%}
+    {%- if forloop.index0 > 0 -%}
+    {%- capture by_variant_json -%}{{ by_variant_json }},{%- endcapture -%}
+    {%- capture variant_meta_json -%}{{ variant_meta_json }},{%- endcapture -%}
+    {%- endif -%}
+
+    {%- capture variant_meta_json -%}
+    {{ variant_meta_json }}
+    "{{ vv.id }}": {
+      "title": {{ vv.title | json }},
+      "price": {{ vv.price | default: 0 }},
+      "compare_at_price": {%- if vv.compare_at_price -%}{{ vv.compare_at_price }}{%- else -%}null{%- endif -%}
+    }
+  {%- endcapture -%}
+
+    {%- capture by_variant_json -%}
+    {{ by_variant_json }}
+    "{{ vv.id }}": [
+      {%- assign wrote_one = false -%}
+    {%- for alloc in vv.selling_plan_allocations -%}
+    {%- assign sp_name = alloc.selling_plan.name | to_s -%}
+    {%- assign sp_price = alloc.price | default: 0 -%}
+    {%- if sp_name != '6 month subscription' or sp_price != 0 -%}
+        {%- assign cmp = alloc.compare_at_price | default: 0 -%}
+        {%- assign prc = sp_price -%}
+    {%- if cmp > 0 -%}
+        {%- assign discount_value = cmp | minus: prc -%}
+        {%- assign discount_percent = discount_value | times: 100.0 | divided_by: cmp -%}
+    {%- else -%}
+        {%- assign discount_value = 0 -%}
+        {%- assign discount_percent = 0 -%}
+    {%- endif -%}
+
+    {%- if wrote_one -%},{%- endif -%}
+          {
+            "selling_plan_group_id": {{ alloc.selling_plan_group_id | json }},
+            "price_adjustments": [
+              {%- for pa in alloc.price_adjustments -%}
+                    {%- assign pa_pos = pa.position | default: forloop.index -%}
+                    {%- assign pa_val = pa.value | default: pa.price | default: 0 -%}
+                    { "position": {{ pa_pos }}, "value": {{ pa_val }} }{%- unless forloop.last -%},{%- endunless -%}
+            {%- endfor -%}
+            ],
+            "selling_plan": {
+              "id": {{ alloc.selling_plan.id | json }},
+              "name": {{ alloc.selling_plan.name | json }},
+              "options": {{ alloc.selling_plan.options | json }},
+              "compare_price": {{ cmp }},
+              "price": {{ prc }},
+              "discount_value": {{ discount_value }},
+              "discount_percent": {{ discount_percent | round: 1 }}
+            }
+          }
+          {%- assign wrote_one = true -%}
+    {%- endif -%}
+    {%- endfor -%}
+    ]
+  {%- endcapture -%}
+    {%- endfor -%}
+
+{
+  "groups": {{ product.selling_plan_groups | json }},
+  "byVariant": { {{ by_variant_json }} },
+  "initialVariantId": "{{ initial_v.id }}",
+  "variantMeta": { {{ variant_meta_json }} }
+}
+</script>
+
+
+<script type="application/json" id="money-format">
+{
+  "currency": {{ shop.currency | json }},
+  "locale": {{ request.locale.iso_code | json }}
+}
+</script>
+
+<recharge-custom-block
+        class="rcb"
+        product-id="{{ product.id }}"
+        form-selector="form[action*='/cart/add']"
+        one-time-option="{% if product.requires_selling_plan %}false{% else %}true{% endif %}"
+>
+    <div class="rcb-container">
+        <input type="hidden" name="selling_plan" class="rcb__hidden-input">
+        <div class="rcb__banner">SAVE ON EVERY ORDER</div>
+
+        <!-- Subscribe card -->
+        <div class="rcb__card rcb__card--subscribe">
+            <label class="rcb__row rcb__row--radio">
+                <input type="radio" name="rcb_mode_{{ product.id }}" class="rcb__radio rcb__radio--sub" value="subscription">
+                <span class="rcb__title">Subscribe &amp; Save</span>
+                <div class="rcb__price">
+                    <s class="rcb__price-compare" aria-hidden="true"></s>
+                    <span class="rcb__price-now"></span>
+                </div>
+            </label>
+
+            <ul class="rcb__benefits" hidden>
+                <li data-sub-discount>Save on your subscription - our best price</li>
+                <li>FREE shipping on every subscription</li>
+                <li>Convenient autoship every 30 days</li>
+                <li>Adjust flavors, shipments, or cancel anytime</li>
+                <li data-extra-feature></li>
+            </ul>
+
+            <div class="rcb__controls" hidden>
+                <label class="rcb__label" for="rcb-frequency-{{ product.id }}">Deliver every:</label>
+                <div class="rcb__select-wrap">
+                    <select id="rcb-frequency-{{ product.id }}" class="rcb__select"></select>
+                    <svg class="rcb__chev" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- One-time row -->
+        {% unless product.requires_selling_plan %}
+            <div class="rcb__card rcb__card--onetime">
+                <label class="rcb__row rcb__row--radio">
+                    <input type="radio" name="rcb_mode_{{ product.id }}" class="rcb__radio rcb__radio--ot" value="onetime">
+                    <span class="rcb__title">One-time Purchase</span>
+                    <div class="rcb__price">
+                        <span class="rcb__ot-price"></span>
+                    </div>
+                </label>
+            </div>
+        {% endunless %}
+    </div>
+
+</recharge-custom-block>
+
+<script>
+    class RechargeCustomBlock extends HTMLElement {
+        connectedCallback() {
+            this.productId = this.getAttribute('product-id');
+            this.formSelector = this.getAttribute('form-selector') || "form[action*='/cart/add']";
+            this.showOneTime = (this.getAttribute('one-time-option') || 'true') === 'true';
+            this.featureMessage = '';
+
+            const dataEl = document.getElementById(`sp-data-${this.productId}`);
+            if (!dataEl) return this._error('Missing plan JSON');
+            this.data = JSON.parse(dataEl.innerHTML || '{}');
+            this.groups = this.data.groups || [];
+            this.byVariant = this.data.byVariant || {};
+            this.variantMeta = this.data.variantMeta || {};
+            this.currentVid = String(this.data.initialVariantId || '');
+
+            const mf = document.getElementById('money-format');
+            this.moneyMeta = mf ? JSON.parse(mf.textContent || '{}') : {};
+
+            this.form = this.closest(this.formSelector) || document.querySelector(this.formSelector);
+            if (!this.form) return this._error('Product form not found');
+
+            // cache nodes
+            this.subRadio = this.querySelector('.rcb__radio--sub');
+            this.otRadio  = this.querySelector('.rcb__radio--ot');
+            this.controls = this.querySelector('.rcb__controls');
+            this.benefits = this.querySelector('.rcb__benefits');
+            this.freq     = this.querySelector('.rcb__select');
+            this.priceNow = this.querySelector('.rcb__price-now');
+            this.priceCmp = this.querySelector('.rcb__price-compare');
+            this.otPrice  = this.querySelector('.rcb__ot-price');
+
+            // events
+            this.subRadio.addEventListener('change', () => this._applyMode());
+            if (this.otRadio) {
+                this.otRadio.addEventListener('change',  () => this._applyMode());
+            }
+            this.freq.addEventListener('change',     () => this._setSellingPlan(this.freq.value || ''));
+
+            // first render
+            this.refreshForVariant(this.currentVid);
+
+            // variant switches (buttons/inputs with data-variant-id)
+            document.addEventListener('change', (e) => {
+                const pressed = e.target?.closest('[data-variant-id]');
+                if (!pressed) return;
+                const vid = String(pressed.getAttribute('data-variant-id'));
+                if (vid) this.refreshForVariant(vid);
+            });
+        }
+
+        _error(msg){ this.innerHTML = `<div class="rcb__error">${msg}</div>`; }
+
+        _formatMoney(cents){
+            const val = Number(cents||0)/100;
+            try {
+                return new Intl.NumberFormat(
+                    this.moneyMeta.locale || 'en',
+                    { style:'currency', currency:this.moneyMeta.currency || 'USD' }
+                ).format(val);
+            } catch(_) { return val.toFixed(2); }
+        }
+
+        _setSellingPlan(value){
+            this.form.querySelectorAll('[name="selling_plan"]').forEach(i => i.value = value || '');
+            const varMeta = this.variantMeta[this.currentVid] || {};
+            this.featureMessage = `variant-${varMeta.title}-${this.freq.value}`
+            this.changeExtraFeatureText();
+        }
+
+        _applyMode(){
+            if (this.subRadio.checked){
+                this.controls.hidden = false;
+                this.benefits.hidden = false;
+                this._setSellingPlan(this.freq.value || '');
+            } else {
+                this.controls.hidden = true;
+                this.benefits.hidden = true;
+                this._setSellingPlan('');
+            }
+        }
+
+        changeExtraFeatureText(text = '') {
+            let featureContainer = this.querySelector('.rcb__benefits [data-extra-feature]');
+            if (featureContainer) {
+                featureContainer.innerHTML = text || this.featureMessage;
+            }
+        }
+
+        refreshForVariant(variantId){
+            this.currentVid = String(variantId || '');
+            const allocs = this.byVariant[this.currentVid] || [];
+
+            // reset
+            this.freq.innerHTML = '';
+            this._setSellingPlan('');
+
+            // if no subs for this variant → force one-time
+            if (!allocs.length){
+                this.subRadio.checked = false;
+                this.subRadio.disabled = true;
+                if (this.showOneTime && this.otRadio){
+                    this.otRadio.checked = true;
+                    this.otRadio.disabled = false;
+                }
+                this.controls.hidden = true;
+                this.benefits.hidden = true;
+            } else {
+                // populate frequency options (ordered by group)
+                const byGroup = {};
+                allocs.forEach(a => { (byGroup[a.selling_plan_group_id] ||= []).push(a); });
+
+                this.groups.forEach(group => {
+                    (byGroup[group.id] || []).forEach(a => {
+                        const opt = document.createElement('option');
+                        opt.value = String(a.selling_plan.id);
+                        const label = (Array.isArray(a.selling_plan.options) && a.selling_plan.options[0]?.value)
+                            ? `${a.selling_plan.name} - ${a.selling_plan.id}`
+                            : (a.selling_plan.name || 'Plan');
+                        opt.textContent = `${label} – ${this._formatMoney(a.selling_plan.price)}`;
+                        this.freq.appendChild(opt);
+                    });
+                });
+
+                this.subRadio.disabled = false;
+                if (this.otRadio) {
+                    this.otRadio.disabled = !this.showOneTime;
+                }
+
+                // default to Subscribe selected (matches screenshot)
+                this.subRadio.checked = true;
+                this.controls.hidden = false;
+                this.benefits.hidden = false;
+                this._setSellingPlan(this.freq.value || '');
+            }
+
+            console.log(this.freq, '===========')
+
+            // price display
+            let subPrice = null, cmpPrice = null;
+            allocs.forEach(a => {
+                if (typeof a.selling_plan?.price === 'number'){
+                    subPrice = (subPrice === null) ? a.selling_plan.price : Math.min(subPrice, a.selling_plan.price);
+                }
+                if (typeof a.selling_plan?.compare_price === 'number' && !cmpPrice){
+                    cmpPrice = a.selling_plan.compare_price;
+                }
+            });
+
+            // one-time price (try data attribute; fallback)
+            const varMeta = this.variantMeta[this.currentVid] || {};
+            this.priceNow.textContent = subPrice != null ? this._formatMoney(subPrice) : '';
+            if (this.otPrice) {
+                let oneTime = (typeof varMeta.price === 'number') ? varMeta.price : null;
+                if (oneTime === null) oneTime = cmpPrice || subPrice;
+                this.otPrice.textContent = oneTime != null ? this._formatMoney(oneTime) : '';
+            }
+
+            if (cmpPrice && subPrice && cmpPrice > subPrice){
+                this.priceCmp.textContent = this._formatMoney(cmpPrice);
+                this.priceCmp.style.display = '';
+            } else {
+                this.priceCmp.textContent = '';
+                this.priceCmp.style.display = 'none';
+            }
+
+            const discountEl = this.querySelector?.('[data-sub-discount]') || document.querySelector('[data-sub-discount]');
+            if (discountEl) {
+                const cmp = Number(cmpPrice);
+                const sub = Number(subPrice);
+                console.log(cmp, sub, 'we are in')
+
+                // valid numbers and actually cheaper than compare-at
+                const pct = (isFinite(cmp) && isFinite(sub) && cmp > 0 && sub >= 0 && sub < cmp)
+                    ? Math.round(((cmp - sub) / cmp) * 100)
+                    : 0;
+                console.log(pct, 'discount')
+                if (pct > 0) {
+                    discountEl.textContent = `Save ${pct}% on your subscription — our best price`;
+                    discountEl.classList.remove('hidden');
+                } else {
+                    discountEl.classList.add('hidden');
+                }
+            }
+
+            this.featureMessage = `variant-${varMeta.title}-${this.freq.value}`
+            this.changeExtraFeatureText();
+
+            // ensure selling_plan reflects chosen mode
+            this._applyMode();
+        }
+    }
+    customElements.define('recharge-custom-block', RechargeCustomBlock);
+</script>
