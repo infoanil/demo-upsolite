@@ -94,7 +94,7 @@
             <ul class="rcb__benefits" hidden>
                 <li data-sub-discount>Save on your subscription - our best price</li>
                 <li>FREE shipping on every subscription</li>
-                <li>Convenient autoship every 30 days</li>
+                <li data-frequency-message data-prefix="Convenient autoship every">Convenient autoship every 30 days</li>
                 <li>Adjust flavors, shipments, or cancel anytime</li>
                 <li data-extra-feature></li>
             </ul>
@@ -157,6 +157,9 @@
             this.priceNow = this.querySelector('.rcb__price-now');
             this.priceCmp = this.querySelector('.rcb__price-compare');
             this.otPrice  = this.querySelector('.rcb__ot-price');
+            this.frequencyBenefit = this.querySelector('[data-frequency-message]');
+            this.frequencyPrefix = this.frequencyBenefit?.dataset.prefix?.trim() || '';
+            this.defaultFrequencyText = this.frequencyBenefit?.textContent.trim() || '';
 
             // events
             this.subRadio.addEventListener('change', () => this._applyMode());
@@ -202,15 +205,18 @@
             const planId = selectedPlanId ? String(selectedPlanId) : '';
             let subPrice = null;
             let cmpPrice = null;
+            let planForMessage = null;
 
             if (planId && this.allocsByPlan && this.allocsByPlan[planId]){
                 const alloc = this.allocsByPlan[planId];
                 const plan = alloc?.selling_plan || {};
+                planForMessage = plan;
                 if (typeof plan.price === 'number') subPrice = plan.price;
                 if (typeof plan.compare_price === 'number' && plan.compare_price > 0){
                     cmpPrice = plan.compare_price;
                 }
             } else {
+                planForMessage = allocs[0]?.selling_plan || null;
                 allocs.forEach(a => {
                     const plan = a?.selling_plan || {};
                     const planPrice = Number(plan.price);
@@ -255,6 +261,83 @@
                     discountEl.classList.add('hidden');
                 }
             }
+            this._updateFrequencyMessage(planForMessage, selectedPlanId);
+        }
+
+        _updateFrequencyMessage(plan, selectedPlanId = ''){
+            if (!this.frequencyBenefit) return;
+            const defaultText = this.defaultFrequencyText;
+            const prefix = this.frequencyPrefix;
+
+            let frequency = this._extractFrequency(plan);
+            if (!frequency) {
+                frequency = this._extractFrequencyFromGroup(selectedPlanId);
+            }
+
+            if (frequency) {
+                this.frequencyBenefit.textContent = prefix
+                    ? `${prefix} ${frequency}`.trim()
+                    : frequency;
+            } else if (defaultText) {
+                this.frequencyBenefit.textContent = defaultText;
+            }
+        }
+
+        _extractFrequency(plan){
+            if (!plan) return '';
+            const options = Array.isArray(plan.options) ? plan.options : [];
+            const freqOption = options.find(opt => (opt?.name || '').toLowerCase() === 'order frequency and unit');
+            const raw = freqOption?.value || (Array.isArray(freqOption?.values) ? freqOption.values[0] : '');
+            return this._normalizeFrequency(raw);
+        }
+
+        _extractFrequencyFromGroup(selectedPlanId = ''){
+            const allocs = this.byVariant[this.currentVid] || [];
+            const planId = selectedPlanId ? String(selectedPlanId) : '';
+            let groupId = '';
+
+            if (planId && this.allocsByPlan && this.allocsByPlan[planId]) {
+                groupId = String(this.allocsByPlan[planId]?.selling_plan_group_id || '');
+            }
+
+            if (!groupId && allocs.length) {
+                groupId = String(allocs[0]?.selling_plan_group_id || '');
+            }
+
+            if (!groupId) return '';
+
+            const group = this.groups.find(g => String(g.id) === groupId);
+            if (!group) return '';
+
+            const freqOpt = (group.options || []).find(opt => (opt?.name || '').toLowerCase() === 'order frequency and unit');
+            const raw = Array.isArray(freqOpt?.values) ? freqOpt.values[0] : freqOpt?.value;
+            return this._normalizeFrequency(raw);
+        }
+
+        _normalizeFrequency(value){
+            if (!value) return '';
+            let cleaned = String(value).trim();
+            if (!cleaned) return '';
+
+            cleaned = cleaned.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+            const match = cleaned.match(/^(\d+(?:\.\d+)?)\s*(\w+)$/);
+            if (!match) return cleaned;
+
+            const qtyRaw = match[1];
+            const qtyNum = Number(qtyRaw);
+            const unitRaw = (match[2] || '').toLowerCase();
+            const singularMap = { day: 'day', days: 'day', week: 'week', weeks: 'week', month: 'month', months: 'month', year: 'year', years: 'year' };
+            const pluralMap = { day: 'days', week: 'weeks', month: 'months', year: 'years' };
+
+            const unitSingular = singularMap[unitRaw] || unitRaw;
+            const qtyStr = Number.isFinite(qtyNum) && Number.isInteger(qtyNum) ? String(qtyNum) : qtyRaw;
+
+            if (Number.isFinite(qtyNum) && Math.abs(qtyNum - 1) < 1e-9) {
+                return `1 ${unitSingular}`;
+            }
+
+            const unitPlural = pluralMap[unitSingular] || (unitSingular.endsWith('s') ? unitSingular : `${unitSingular}s`);
+            return `${qtyStr} ${unitPlural}`;
         }
 
         _applyMode(){
