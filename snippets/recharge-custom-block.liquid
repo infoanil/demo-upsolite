@@ -28,15 +28,8 @@
     {%- if sp_name != '6 month subscription' or sp_price != 0 -%}
         {%- assign cmp = alloc.compare_at_price | default: 0 -%}
         {%- assign prc = sp_price -%}
-    {%- if cmp > 0 -%}
-        {%- assign discount_value = cmp | minus: prc -%}
-        {%- assign discount_percent = discount_value | times: 100.0 | divided_by: cmp -%}
-    {%- else -%}
-        {%- assign discount_value = 0 -%}
-        {%- assign discount_percent = 0 -%}
-    {%- endif -%}
 
-    {%- if wrote_one -%},{%- endif -%}
+        {%- if wrote_one -%},{%- endif -%}
           {
             "selling_plan_group_id": {{ alloc.selling_plan_group_id | json }},
             "price_adjustments": [
@@ -51,13 +44,11 @@
               "name": {{ alloc.selling_plan.name | json }},
               "options": {{ alloc.selling_plan.options | json }},
               "compare_price": {{ cmp }},
-              "price": {{ prc }},
-              "discount_value": {{ discount_value }},
-              "discount_percent": {{ discount_percent | round: 1 }}
+              "price": {{ prc }}
             }
           }
           {%- assign wrote_one = true -%}
-    {%- endif -%}
+        {%- endif -%}
     {%- endfor -%}
     ]
   {%- endcapture -%}
@@ -201,8 +192,69 @@
         _setSellingPlan(value){
             this.form.querySelectorAll('[name="selling_plan"]').forEach(i => i.value = value || '');
             const varMeta = this.variantMeta[this.currentVid] || {};
-            this.featureMessage = `variant-${varMeta.title}-${this.freq.value}`
+            this.featureMessage = `variant-${varMeta.title || ''}-${this.freq.value}`
             this.changeExtraFeatureText();
+            this._updatePricing(value);
+        }
+
+        _updatePricing(selectedPlanId = ''){
+            const allocs = this.byVariant[this.currentVid] || [];
+            const planId = selectedPlanId ? String(selectedPlanId) : '';
+            let subPrice = null;
+            let cmpPrice = null;
+
+            if (planId && this.allocsByPlan && this.allocsByPlan[planId]){
+                const alloc = this.allocsByPlan[planId];
+                const plan = alloc?.selling_plan || {};
+                if (typeof plan.price === 'number') subPrice = plan.price;
+                if (typeof plan.compare_price === 'number' && plan.compare_price > 0){
+                    cmpPrice = plan.compare_price;
+                }
+            } else {
+                allocs.forEach(a => {
+                    const plan = a?.selling_plan || {};
+                    const planPrice = Number(plan.price);
+                    const planCompare = Number(plan.compare_price);
+                    if (isFinite(planPrice)){
+                        subPrice = (subPrice === null) ? planPrice : Math.min(subPrice, planPrice);
+                    }
+                    if (cmpPrice === null && isFinite(planCompare) && planCompare > 0){
+                        cmpPrice = planCompare;
+                    }
+                });
+            }
+
+            const varMeta = this.variantMeta[this.currentVid] || {};
+            this.priceNow.textContent = subPrice != null ? this._formatMoney(subPrice) : '';
+
+            if (this.otPrice) {
+                let oneTime = (typeof varMeta.price === 'number') ? varMeta.price : null;
+                if (oneTime === null) oneTime = cmpPrice != null ? cmpPrice : subPrice;
+                this.otPrice.textContent = oneTime != null ? this._formatMoney(oneTime) : '';
+            }
+
+            if (cmpPrice != null && subPrice != null && cmpPrice > subPrice){
+                this.priceCmp.textContent = this._formatMoney(cmpPrice);
+                this.priceCmp.style.display = '';
+            } else {
+                this.priceCmp.textContent = '';
+                this.priceCmp.style.display = 'none';
+            }
+
+            const discountEl = this.querySelector?.('[data-sub-discount]') || document.querySelector('[data-sub-discount]');
+            if (discountEl) {
+                const cmp = Number(cmpPrice);
+                const sub = Number(subPrice);
+                const pct = (isFinite(cmp) && isFinite(sub) && cmp > 0 && sub >= 0 && sub < cmp)
+                    ? Math.round(((cmp - sub) / cmp) * 100)
+                    : 0;
+                if (pct > 0) {
+                    discountEl.textContent = `Save ${pct}% on your subscription — our best price`;
+                    discountEl.classList.remove('hidden');
+                } else {
+                    discountEl.classList.add('hidden');
+                }
+            }
         }
 
         _applyMode(){
@@ -227,6 +279,7 @@
         refreshForVariant(variantId){
             this.currentVid = String(variantId || '');
             const allocs = this.byVariant[this.currentVid] || [];
+            this.allocsByPlan = {};
 
             // reset
             this.freq.innerHTML = '';
@@ -245,7 +298,11 @@
             } else {
                 // populate frequency options (ordered by group)
                 const byGroup = {};
-                allocs.forEach(a => { (byGroup[a.selling_plan_group_id] ||= []).push(a); });
+                allocs.forEach(a => {
+                    (byGroup[a.selling_plan_group_id] ||= []).push(a);
+                    const planId = String(a?.selling_plan?.id || '');
+                    if (planId) this.allocsByPlan[planId] = a;
+                });
 
                 this.groups.forEach(group => {
                     (byGroup[group.id] || []).forEach(a => {
@@ -271,56 +328,8 @@
                 this._setSellingPlan(this.freq.value || '');
             }
 
-            console.log(this.freq, '===========')
-
-            // price display
-            let subPrice = null, cmpPrice = null;
-            allocs.forEach(a => {
-                if (typeof a.selling_plan?.price === 'number'){
-                    subPrice = (subPrice === null) ? a.selling_plan.price : Math.min(subPrice, a.selling_plan.price);
-                }
-                if (typeof a.selling_plan?.compare_price === 'number' && !cmpPrice){
-                    cmpPrice = a.selling_plan.compare_price;
-                }
-            });
-
-            // one-time price (try data attribute; fallback)
             const varMeta = this.variantMeta[this.currentVid] || {};
-            this.priceNow.textContent = subPrice != null ? this._formatMoney(subPrice) : '';
-            if (this.otPrice) {
-                let oneTime = (typeof varMeta.price === 'number') ? varMeta.price : null;
-                if (oneTime === null) oneTime = cmpPrice || subPrice;
-                this.otPrice.textContent = oneTime != null ? this._formatMoney(oneTime) : '';
-            }
-
-            if (cmpPrice && subPrice && cmpPrice > subPrice){
-                this.priceCmp.textContent = this._formatMoney(cmpPrice);
-                this.priceCmp.style.display = '';
-            } else {
-                this.priceCmp.textContent = '';
-                this.priceCmp.style.display = 'none';
-            }
-
-            const discountEl = this.querySelector?.('[data-sub-discount]') || document.querySelector('[data-sub-discount]');
-            if (discountEl) {
-                const cmp = Number(cmpPrice);
-                const sub = Number(subPrice);
-                console.log(cmp, sub, 'we are in')
-
-                // valid numbers and actually cheaper than compare-at
-                const pct = (isFinite(cmp) && isFinite(sub) && cmp > 0 && sub >= 0 && sub < cmp)
-                    ? Math.round(((cmp - sub) / cmp) * 100)
-                    : 0;
-                console.log(pct, 'discount')
-                if (pct > 0) {
-                    discountEl.textContent = `Save ${pct}% on your subscription — our best price`;
-                    discountEl.classList.remove('hidden');
-                } else {
-                    discountEl.classList.add('hidden');
-                }
-            }
-
-            this.featureMessage = `variant-${varMeta.title}-${this.freq.value}`
+            this.featureMessage = `variant-${varMeta.title || ''}-${this.freq.value}`
             this.changeExtraFeatureText();
 
             // ensure selling_plan reflects chosen mode
