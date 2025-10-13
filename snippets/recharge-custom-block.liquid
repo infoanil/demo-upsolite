@@ -1,4 +1,19 @@
 {%- assign initial_v = product.selected_or_first_available_variant -%}
+{%- assign recharge_plans = shop.metaobjects.recharge_plans.values -%}
+{%- capture plan_meta_json -%}{%- endcapture -%}
+{%- for plan in recharge_plans -%}
+  {%- if forloop.index0 > 0 -%}
+    {%- capture plan_meta_json -%}{{ plan_meta_json }},{%- endcapture -%}
+  {%- endif -%}
+  {%- capture plan_meta_json -%}
+    {{ plan_meta_json }}
+    {{ plan.name | json }}: {
+      "tagline": {{ plan.tagline | default: '' | json }},
+      "hide": {{ plan.hide_plan | default: false | json }}
+    }
+  {%- endcapture -%}
+{%- endfor -%}
+
 <script type="application/json" id="sp-data-{{ product.id }}">
 {%- capture by_variant_json -%}{%- endcapture -%}
 {%- capture variant_meta_json -%}{%- endcapture -%}
@@ -58,7 +73,8 @@
   "groups": {{ product.selling_plan_groups | json }},
   "byVariant": { {{ by_variant_json }} },
   "initialVariantId": "{{ initial_v.id }}",
-  "variantMeta": { {{ variant_meta_json }} }
+  "variantMeta": { {{ variant_meta_json }} },
+  "planMeta": { {{ plan_meta_json }} }
 }
 </script>
 
@@ -140,6 +156,7 @@
             this.groups = this.data.groups || [];
             this.byVariant = this.data.byVariant || {};
             this.variantMeta = this.data.variantMeta || {};
+            this.planMeta = this.data.planMeta || {};
             this.currentVid = String(this.data.initialVariantId || '');
 
             const mf = document.getElementById('money-format');
@@ -160,6 +177,8 @@
             this.frequencyBenefit = this.querySelector('[data-frequency-message]');
             this.frequencyPrefix = this.frequencyBenefit?.dataset.prefix?.trim() || '';
             this.defaultFrequencyText = this.frequencyBenefit?.textContent.trim() || '';
+            this.extraFeature = this.querySelector('[data-extra-feature]');
+            this.defaultFeatureText = this.extraFeature?.textContent.trim() || '';
 
             // events
             this.subRadio.addEventListener('change', () => this._applyMode());
@@ -194,8 +213,7 @@
 
         _setSellingPlan(value){
             this.form.querySelectorAll('[name="selling_plan"]').forEach(i => i.value = value || '');
-            const varMeta = this.variantMeta[this.currentVid] || {};
-            this.featureMessage = `variant-${varMeta.title || ''}-${this.freq.value}`
+            this.featureMessage = this._resolveFeatureMessage(value) || this.defaultFeatureText || '';
             this.changeExtraFeatureText();
             this._updatePricing(value);
         }
@@ -314,6 +332,27 @@
             return this._normalizeFrequency(raw);
         }
 
+        _resolveFeatureMessage(selectedPlanId = ''){
+            if (!this.planMeta) return '';
+            const planId = selectedPlanId ? String(selectedPlanId) : '';
+
+            let planName = '';
+            if (planId && this.allocsByPlan && this.allocsByPlan[planId]) {
+                planName = this.allocsByPlan[planId]?.selling_plan?.name || '';
+            }
+
+            if (!planName) {
+                const allocs = this.byVariant[this.currentVid] || [];
+                planName = allocs[0]?.selling_plan?.name || '';
+            }
+
+            planName = (planName || '').trim();
+            if (!planName) return '';
+            const meta = this.planMeta[planName];
+            const tagline = meta?.tagline;
+            return (typeof tagline === 'string') ? tagline.trim() : '';
+        }
+
         _normalizeFrequency(value){
             if (!value) return '';
             let cleaned = String(value).trim();
@@ -353,10 +392,11 @@
         }
 
         changeExtraFeatureText(text = '') {
-            let featureContainer = this.querySelector('.rcb__benefits [data-extra-feature]');
-            if (featureContainer) {
-                featureContainer.innerHTML = text || this.featureMessage;
-            }
+            const featureContainer = this.extraFeature || this.querySelector('.rcb__benefits [data-extra-feature]');
+            if (!featureContainer) return;
+            const resolved = text || this.featureMessage || this.defaultFeatureText || '';
+            featureContainer.textContent = resolved;
+            featureContainer.classList.toggle('hidden', !resolved);
         }
 
         refreshForVariant(variantId){
@@ -410,10 +450,6 @@
                 this.benefits.hidden = false;
                 this._setSellingPlan(this.freq.value || '');
             }
-
-            const varMeta = this.variantMeta[this.currentVid] || {};
-            this.featureMessage = `variant-${varMeta.title || ''}-${this.freq.value}`
-            this.changeExtraFeatureText();
 
             // ensure selling_plan reflects chosen mode
             this._applyMode();
