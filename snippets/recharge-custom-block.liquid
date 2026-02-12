@@ -103,6 +103,25 @@
     assign text_sub_label = widget_content.subscription_label | default: "Subscribe & Save"
     assign text_onetime_label = widget_content.one_time_label | default: "One-time Purchase"
     assign text_frequency_label = widget_content.frequency_label | default: "Deliver every:"
+    assign r_json = "[]"
+  endif
+
+  if is_french
+      assign rep_parts = ""
+      for i in (1..5)
+         assign k_en = 'plan_replace_en_' | append: i
+         assign k_fr = 'plan_replace_fr_' | append: i
+         assign v_en = widget_content[k_en]
+         assign v_fr = widget_content[k_fr]
+         if v_en != blank and v_fr != blank
+             assign v_en_json = v_en | json
+             assign v_fr_json = v_fr | json
+             assign entry = '{"find":' | append: v_en_json | append: ',"replace":' | append: v_fr_json | append: '}'
+             assign rep_parts = rep_parts | append: "," | append: entry
+         endif
+      endfor
+      assign clean_parts = rep_parts | remove_first: ","
+      assign r_json = "[" | append: clean_parts | append: "]"
   endif
 -%}
 
@@ -111,6 +130,7 @@
         product-id="{{ product.id }}"
         form-selector="form[action*='/cart/add']"
         one-time-option="{% if product.requires_selling_plan %}false{% else %}true{% endif %}"
+        data-replacements="{{ r_json | escape }}"
 >
     <div class="rcb-container">
         <input type="hidden" name="selling_plan" class="rcb__hidden-input">
@@ -181,6 +201,10 @@
             this.formSelector = this.getAttribute('form-selector') || "form[action*='/cart/add']";
             this.showOneTime = (this.getAttribute('one-time-option') || 'true') === 'true';
             this.featureMessage = '';
+            
+            try {
+                this.replacements = JSON.parse(this.dataset.replacements || '[]');
+            } catch(e) { this.replacements = []; }
 
             const dataEl = document.getElementById(`sp-data-${this.productId}`);
             if (!dataEl) return this._error('Missing plan JSON');
@@ -548,9 +572,19 @@
                     (byGroup[groupId] || []).forEach(a => {
                         const opt = document.createElement('option');
                         opt.value = String(a.selling_plan.id);
-                        const label = (Array.isArray(a.selling_plan.options) && a.selling_plan.options[0]?.value)
+                        let label = (Array.isArray(a.selling_plan.options) && a.selling_plan.options[0]?.value)
                             ? `${a.selling_plan.name}`
                             : (a.selling_plan.name || 'Plan');
+                        
+                        // Apply replacements
+                        if (this.replacements && this.replacements.length) {
+                             this.replacements.forEach(r => {
+                                 if (r.find && r.replace) {
+                                     label = label.split(r.find).join(r.replace);
+                                 }
+                             });
+                        }
+                        
                         opt.textContent = `${label}`;
                         this.freq.appendChild(opt);
                     });
