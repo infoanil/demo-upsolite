@@ -89,7 +89,7 @@
 {%- liquid
   assign widget_content = shop.metaobjects.recharge_widget['shakeology-template']
   assign is_french = false
-  if request.locale.iso_code contains 'de'
+  if request.locale.iso_code contains 'fr'
     assign is_french = true
   endif
 
@@ -108,9 +108,9 @@
 
   if is_french
       assign rep_parts = ""
-      for i in (1..5)
-         assign k_en = 'plan_replace_en_' | append: i
-         assign k_fr = 'plan_replace_fr_' | append: i
+      for i in (1..4)
+         assign k_en = 'frequency_option_' | append: i | append: '_en'
+         assign k_fr = 'frequency_option_' | append: i | append: '_fr'
          assign v_en = widget_content[k_en]
          assign v_fr = widget_content[k_fr]
          if v_en != blank and v_fr != blank
@@ -356,7 +356,7 @@
                 const template = discountEl.dataset.template || discountEl.textContent;
 
                 if (pct > 0) {
-                    discountEl.textContent = template.replace(/{discount}/gi, `${pct}%`);
+                    discountEl.textContent = template.replace(/{discount}/gi, `${pct}`);
                     discountEl.classList.remove('hidden');
                     discountEl.removeAttribute('hidden');
                 } else {
@@ -382,7 +382,9 @@
 
             if (frequency) {
                 if (template.includes('{interval}')) {
-                    freqEl.textContent = template.replace(/{interval}/gi, frequency);
+                    // Pre-clean template: remove hardcoded units after placeholder to prevent "30 days days" or "12 months days"
+                    const cleanTemplate = template.replace(/\{interval\}\s*(days|weeks|months|years)/gi, '{interval}');
+                    freqEl.textContent = cleanTemplate.replace(/{interval}/gi, frequency);
                 } else {
                     freqEl.textContent = prefix
                         ? `${prefix} ${frequency}`.trim()
