@@ -81,10 +81,30 @@
 
 <script type="application/json" id="money-format">
 {
-  "currency": {{ shop.currency | json }},
+  "currency": {{ cart.currency.iso_code | json }},
   "locale": {{ request.locale.iso_code | json }}
 }
 </script>
+
+{%- liquid
+  assign widget_content = shop.metaobjects.recharge_widget['shakeology-template']
+  assign is_french = false
+  if request.locale.iso_code contains 'de'
+    assign is_french = true
+  endif
+
+  if is_french
+    assign text_header = widget_content.header_french | default: "ÉCONOMISEZ SUR CHAQUE COMMANDE"
+    assign text_sub_label = widget_content.subscription_label_french | default: "S'abonner & économiser"
+    assign text_onetime_label = widget_content.one_time_label_french | default: "Achat unique"
+    assign text_frequency_label = widget_content.frequency_label_french | default: "Livrer chaque:"
+  else
+    assign text_header = widget_content.header | default: "SAVE ON EVERY ORDER"
+    assign text_sub_label = widget_content.subscription_label | default: "Subscribe & Save"
+    assign text_onetime_label = widget_content.one_time_label | default: "One-time Purchase"
+    assign text_frequency_label = widget_content.frequency_label | default: "Deliver every:"
+  endif
+-%}
 
 <recharge-custom-block
         class="rcb"
@@ -94,13 +114,13 @@
 >
     <div class="rcb-container">
         <input type="hidden" name="selling_plan" class="rcb__hidden-input">
-        <div class="rcb__banner">SAVE ON EVERY ORDER</div>
+        <div class="rcb__banner">{{ text_header }}</div>
 
         <!-- Subscribe card -->
         <div class="rcb__card rcb__card--subscribe">
             <label class="rcb__row rcb__row--radio">
                 <input type="radio" name="rcb_mode_{{ product.id }}" class="rcb__radio rcb__radio--sub" value="subscription">
-                <span class="rcb__title">Subscribe &amp; Save</span>
+                <span class="rcb__title">{{ text_sub_label }}</span>
                 <div class="rcb__price">
                     <s class="rcb__price-compare" aria-hidden="true"></s>
                     <span class="rcb__price-now"></span>
@@ -108,15 +128,27 @@
             </label>
 
             <ul class="rcb__benefits" hidden>
-                <li data-sub-discount>Save on your subscription - our best price</li>
-                <li>FREE shipping on every subscription</li>
-                <li data-frequency-message data-prefix="Convenient autoship every">Convenient autoship every 30 days</li>
-                <li>Adjust flavors, shipments, or cancel anytime</li>
+                {%- for i in (1..5) -%}
+                  {%- capture key -%}benefit_{{ i }}{%- endcapture -%}
+                  {%- capture key_fr -%}benefit_{{ i }}_french{%- endcapture -%}
+                  {%- assign text = widget_content[key] -%}
+                  {%- if is_french -%}
+                    {%- assign text = widget_content[key_fr] | default: text -%}
+                  {%- endif -%}
+
+                  {%- if text != blank -%}
+                    <li 
+                      {% if text contains '{discount}' %}data-sub-discount{% endif %}
+                      {% if text contains '{interval}' %}data-frequency-message{% endif %}
+                      data-template="{{ text | escape }}"
+                    >{{ text }}</li>
+                  {%- endif -%}
+                {%- endfor -%}
                 <li data-extra-feature></li>
             </ul>
 
             <div class="rcb__controls" hidden>
-                <label class="rcb__label" for="rcb-frequency-{{ product.id }}">Deliver every:</label>
+                <label class="rcb__label" for="rcb-frequency-{{ product.id }}">{{ text_frequency_label }}</label>
                 <div class="rcb__select-wrap">
                     <select id="rcb-frequency-{{ product.id }}" class="rcb__select"></select>
                     <svg class="rcb__chev" viewBox="0 0 24 24" aria-hidden="true">
@@ -131,7 +163,7 @@
             <div class="rcb__card rcb__card--onetime">
                 <label class="rcb__row rcb__row--radio">
                     <input type="radio" name="rcb_mode_{{ product.id }}" class="rcb__radio rcb__radio--ot" value="onetime">
-                    <span class="rcb__title">One-time Purchase</span>
+                    <span class="rcb__title">{{ text_onetime_label }}</span>
                     <div class="rcb__price">
                         <span class="rcb__ot-price"></span>
                     </div>
@@ -296,18 +328,26 @@
                 const pct = (isFinite(cmp) && isFinite(sub) && cmp > 0 && sub >= 0 && sub < cmp)
                     ? Math.round(((cmp - sub) / cmp) * 100)
                     : 0;
+                
+                const template = discountEl.dataset.template || discountEl.textContent;
+
                 if (pct > 0) {
-                    discountEl.textContent = `Save ${pct}% on your subscription — our best price`;
+                    discountEl.textContent = template.replace(/{discount}/gi, `${pct}%`);
                     discountEl.classList.remove('hidden');
+                    discountEl.removeAttribute('hidden');
                 } else {
                     discountEl.classList.add('hidden');
+                    discountEl.setAttribute('hidden', '');
                 }
             }
             this._updateFrequencyMessage(planForMessage, selectedPlanId);
         }
 
         _updateFrequencyMessage(plan, selectedPlanId = ''){
-            if (!this.frequencyBenefit) return;
+            const freqEl = this.frequencyBenefit || this.querySelector('[data-frequency-message]');
+            if (!freqEl) return;
+            
+            const template = freqEl.dataset.template || '';
             const defaultText = this.defaultFrequencyText;
             const prefix = this.frequencyPrefix;
 
@@ -317,11 +357,30 @@
             }
 
             if (frequency) {
-                this.frequencyBenefit.textContent = prefix
-                    ? `${prefix} ${frequency}`.trim()
-                    : frequency;
-            } else if (defaultText) {
-                this.frequencyBenefit.textContent = defaultText;
+                if (template.includes('{interval}')) {
+                    freqEl.textContent = template.replace(/{interval}/gi, frequency);
+                } else {
+                    freqEl.textContent = prefix
+                        ? `${prefix} ${frequency}`.trim()
+                        : frequency;
+                }
+                freqEl.hidden = false;
+                freqEl.removeAttribute('hidden');
+            } else {
+                // No derived frequency. Check if we should fall back or hide.
+                // If the template/text expects an interval (contains placeholder), we MUST hide it.
+                if ((template && template.includes('{interval}')) || (defaultText && defaultText.includes('{interval}'))) {
+                    freqEl.hidden = true;
+                    freqEl.setAttribute('hidden', '');
+                } else if (defaultText) {
+                    // Safe to show default text (no placeholder)
+                    freqEl.textContent = defaultText;
+                    freqEl.hidden = false;
+                    freqEl.removeAttribute('hidden');
+                } else {
+                    freqEl.hidden = true;
+                    freqEl.setAttribute('hidden', '');
+                }
             }
         }
 
