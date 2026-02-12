@@ -38,7 +38,7 @@
     "{{ vv.id }}": [
       {%- assign wrote_one = false -%}
     {%- for alloc in vv.selling_plan_allocations -%}
-    {%- assign sp_name = alloc.selling_plan.name | to_s -%}
+    {%- assign sp_name = alloc.selling_plan.name -%}
     {%- assign sp_price = alloc.price | default: 0 -%}
    
         {%- assign cmp = alloc.compare_at_price | default: 0 -%}
@@ -181,22 +181,36 @@
             this.defaultFeatureText = this.extraFeature?.textContent.trim() || '';
 
             // events
-            this.subRadio.addEventListener('change', () => this._applyMode());
+            this._handleSubRadio = () => this._applyMode();
+            this._handleOtRadio = () => this._applyMode();
+            this._handleFreqChange = () => this._setSellingPlan(this.freq.value || '');
+
+            this.subRadio.addEventListener('change', this._handleSubRadio);
             if (this.otRadio) {
-                this.otRadio.addEventListener('change',  () => this._applyMode());
+                this.otRadio.addEventListener('change', this._handleOtRadio);
             }
-            this.freq.addEventListener('change',     () => this._setSellingPlan(this.freq.value || ''));
+            this.freq.addEventListener('change', this._handleFreqChange);
 
             // first render
             this.refreshForVariant(this.currentVid);
 
             // variant switches (buttons/inputs with data-variant-id)
-            document.addEventListener('change', (e) => {
+            this._onVariantChange = (e) => {
                 const pressed = e.target?.closest('[data-variant-id]');
                 if (!pressed) return;
                 const vid = String(pressed.getAttribute('data-variant-id'));
                 if (vid) this.refreshForVariant(vid);
-            });
+            };
+            document.addEventListener('change', this._onVariantChange);
+        }
+
+        disconnectedCallback() {
+            if (this._onVariantChange) {
+                document.removeEventListener('change', this._onVariantChange);
+            }
+            if (this.subRadio) this.subRadio.removeEventListener('change', this._handleSubRadio);
+            if (this.otRadio) this.otRadio.removeEventListener('change', this._handleOtRadio);
+            if (this.freq) this.freq.removeEventListener('change', this._handleFreqChange);
         }
 
         _error(msg){ this.innerHTML = `<div class="rcb__error">${msg}</div>`; }
@@ -252,12 +266,19 @@
             }
 
             const varMeta = this.variantMeta[this.currentVid] || {};
+            const oneTimePrice = (typeof varMeta.price === 'number') ? varMeta.price : null;
+            
+            // Fallback for compare price
+            if (cmpPrice === null || cmpPrice === 0) {
+                 cmpPrice = oneTimePrice;
+            }
+
             this.priceNow.textContent = subPrice != null ? this._formatMoney(subPrice) : '';
 
             if (this.otPrice) {
-                let oneTime = (typeof varMeta.price === 'number') ? varMeta.price : null;
-                if (oneTime === null) oneTime = cmpPrice != null ? cmpPrice : subPrice;
-                this.otPrice.textContent = oneTime != null ? this._formatMoney(oneTime) : '';
+                let otDisplay = oneTimePrice;
+                if (otDisplay === null) otDisplay = cmpPrice != null ? cmpPrice : subPrice;
+                this.otPrice.textContent = otDisplay != null ? this._formatMoney(otDisplay) : '';
             }
 
             if (cmpPrice != null && subPrice != null && cmpPrice > subPrice){
@@ -384,7 +405,7 @@
             let cleaned = String(value).trim();
             if (!cleaned) return '';
 
-            cleaned = cleaned.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+            cleaned = cleaned.replace(/^every\s+/i, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
             const match = cleaned.match(/^(\d+(?:\.\d+)?)\s*(\w+)$/);
             if (!match) return cleaned;
 
@@ -464,7 +485,8 @@
                 });
 
                 this.groups.forEach(group => {
-                    (byGroup[group.id] || []).forEach(a => {
+                    const groupId = String(group.id);
+                    (byGroup[groupId] || []).forEach(a => {
                         const opt = document.createElement('option');
                         opt.value = String(a.selling_plan.id);
                         const label = (Array.isArray(a.selling_plan.options) && a.selling_plan.options[0]?.value)
